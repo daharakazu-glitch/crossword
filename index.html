@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>英単語クロスワードメーカー</title>
+  <link rel="stylesheet" href="css/style.css">
+  <!-- 外部ライブラリ(CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header class="app-header">
+      <div class="app-title">英単語クロスワードメーカー<small>CROSSWORD MAKER</small></div>
+      <p class="app-sub">最大100語の英単語からクロスワードを自動生成。ヒントは英文穴埋め・和訳から選べます。PDFでダウンロードも可能。</p>
+    </header>
+
+    <!-- STEP 1: 単語の取り込み -->
+    <section class="card">
+      <h2><span class="step">1</span>単語を入れる</h2>
+      <p class="hint">下のいずれかの方法で英単語を登録します（最大100語）。和訳・例文はヒントに使われます。</p>
+
+      <div class="tabs" id="importTabs">
+        <button class="tab active" data-tab="manual">キーボード入力</button>
+        <button class="tab" data-tab="sheet">スプレッドシート</button>
+        <button class="tab" data-tab="photo">写真(OCR)</button>
+        <button class="tab" data-tab="doc">PDF / Word</button>
+      </div>
+
+      <!-- 手入力 -->
+      <div class="panel active" id="panel-manual">
+        <textarea id="manualInput" placeholder="1行に1語。カンマ / タブ / スラッシュ区切りで [英単語, 和訳, 例文] も指定できます。&#10;&#10;例:&#10;apple, りんご, I ate an ( ) for breakfast.&#10;honest / 正直な / He is an ( ) student.&#10;courage&#10;determination, 決意"></textarea>
+        <p class="field-note">区切り文字: カンマ「,」・タブ・スラッシュ「/」。例文中の空所は「( )」で書いてください（自動で単語部分を空所化もします）。</p>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="addManual">リストに追加</button>
+          <button class="btn btn-ghost" id="loadSample">サンプルを読み込む</button>
+        </div>
+      </div>
+
+      <!-- スプレッドシート -->
+      <div class="panel" id="panel-sheet">
+        <label class="file-drop" id="dropSheet">
+          <input type="file" id="fileSheet" accept=".xlsx,.xls,.csv,.tsv">
+          <div><strong>Excel / CSV を選択</strong> またはドラッグ＆ドロップ</div>
+          <div class="field-note">A列=英単語, B列=和訳, C列=例文 の順（ヘッダー行があってもOK）</div>
+        </label>
+        <div class="status" id="statusSheet"></div>
+      </div>
+
+      <!-- 写真OCR -->
+      <div class="panel" id="panel-photo">
+        <label class="file-drop" id="dropPhoto">
+          <input type="file" id="filePhoto" accept="image/*">
+          <div><strong>英文の写真を選択</strong> またはドラッグ＆ドロップ</div>
+          <div class="field-note">画像から英単語を読み取ってリスト化します（和訳は後で編集）</div>
+        </label>
+        <div class="status" id="statusPhoto"></div>
+      </div>
+
+      <!-- PDF / Word -->
+      <div class="panel" id="panel-doc">
+        <label class="file-drop" id="dropDoc">
+          <input type="file" id="fileDoc" accept=".pdf,.docx,.txt">
+          <div><strong>PDF / Word(.docx) / テキストを選択</strong> またはドラッグ＆ドロップ</div>
+          <div class="field-note">文書内の英単語を抽出してリスト化します（和訳は後で編集）</div>
+        </label>
+        <div class="status" id="statusDoc"></div>
+      </div>
+    </section>
+
+    <!-- STEP 2: 単語リスト -->
+    <section class="card">
+      <h2><span class="step">2</span>単語リスト <span class="count-badge" id="countBadge">0 / 100</span></h2>
+      <p class="hint">セルをクリックして編集できます。和訳・例文はヒントの表示に使われます。</p>
+      <div class="word-table-wrap">
+        <table class="words">
+          <thead>
+            <tr><th style="width:34px">#</th><th style="width:26%">英単語</th><th style="width:26%">和訳</th><th>例文（空所は ( ) ）</th><th style="width:36px"></th></tr>
+          </thead>
+          <tbody id="wordBody"></tbody>
+        </table>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" id="addRow">＋ 行を追加</button>
+        <button class="btn btn-ghost" id="clearAll">すべて削除</button>
+      </div>
+    </section>
+
+    <!-- STEP 3: ヒント形式 -->
+    <section class="card">
+      <h2><span class="step">3</span>ヒントの形式を選ぶ</h2>
+      <div class="clue-options" id="clueOptions">
+        <label class="clue-opt sel">
+          <input type="radio" name="clueType" value="fill_ja" checked>
+          <div class="t">英文穴埋め＋和訳</div>
+          <div class="d">例文の空所と日本語訳の両方を表示</div>
+        </label>
+        <label class="clue-opt">
+          <input type="radio" name="clueType" value="fill">
+          <div class="t">英文穴埋めのみ</div>
+          <div class="d">例文の空所だけを表示（訳なし）</div>
+        </label>
+        <label class="clue-opt">
+          <input type="radio" name="clueType" value="ja">
+          <div class="t">和訳のみ</div>
+          <div class="d">日本語の意味だけを表示</div>
+        </label>
+      </div>
+    </section>
+
+    <!-- 生成ボタン -->
+    <div class="btn-row" style="justify-content:center; margin-bottom: 8px;">
+      <button class="btn btn-primary" id="generateBtn" style="font-size:1.05rem; padding: 14px 34px;">クロスワードを作成</button>
+    </div>
+    <div class="status" id="genStatus" style="text-align:center"></div>
+
+    <!-- 結果 -->
+    <section class="card" id="result">
+      <h2>できあがったクロスワード</h2>
+      <div class="result-actions">
+        <button class="btn btn-primary" id="downloadPdf">PDFでダウンロード</button>
+        <label class="clue-opt" style="display:inline-flex; align-items:center; gap:8px; padding:8px 14px; cursor:pointer;">
+          <input type="checkbox" id="showAnswers"> <span class="t" style="font-size:.86rem;">解答を表示</span>
+        </label>
+        <button class="btn btn-ghost" id="regenBtn">別のレイアウトで再生成</button>
+      </div>
+      <div id="gridHost" style="overflow-x:auto; padding: 8px 0;"></div>
+      <div id="unplacedHost"></div>
+      <div class="clue-cols">
+        <div class="clue-list"><h3>ヨコのカギ (Across)</h3><ol id="acrossList"></ol></div>
+        <div class="clue-list"><h3>タテのカギ (Down)</h3><ol id="downList"></ol></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- PDF/印刷キャプチャ用 -->
+  <div id="printArea" aria-hidden="true"></div>
+
+  <script src="js/generator.js"></script>
+  <script src="js/import.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
