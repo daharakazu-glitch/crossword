@@ -239,33 +239,55 @@
   $("generateBtn").addEventListener("click", generate);
   $("regenBtn").addEventListener("click", generate);
 
-  $("showAnswers").addEventListener("change", () => {
-    $("gridHost").querySelectorAll(".cw-cell.fill").forEach((c) => {
-      c.classList.toggle("hide-letter", !$("showAnswers").checked);
-    });
-  });
-
   // 出題形式を変えたら結果も更新
   document.querySelectorAll('input[name="clueType"]').forEach((r) =>
     r.addEventListener("change", () => { if (puzzle) renderResult(); }));
 
+  /* ---------------- 盤面描画 & 入力 ---------------- */
+  let inputs = {};      // "r,c" -> input要素
+  let cellWords = {};   // "r,c" -> {H: item, V: item}
+  let curDir = "H";
+  let curCell = null;   // "r,c"
+
   function renderResult() {
-    // グリッド
+    inputs = {};
+    cellWords = {};
+    curCell = null;
+
+    // セル→単語の索引
+    puzzle.across.concat(puzzle.down).forEach((it) => {
+      const dr = it.dir === "V" ? 1 : 0, dc = it.dir === "H" ? 1 : 0;
+      for (let i = 0; i < it.entry.word.length; i++) {
+        const k = (it.r + dr * i) + "," + (it.c + dc * i);
+        if (!cellWords[k]) cellWords[k] = {};
+        cellWords[k][it.dir] = it;
+      }
+    });
+
     const host = $("gridHost");
     host.innerHTML = "";
     const grid = document.createElement("div");
     grid.className = "cw-grid";
     grid.style.gridTemplateColumns = "repeat(" + puzzle.cols + ", 34px)";
-    const showAns = $("showAnswers").checked;
+
     for (let r = 0; r < puzzle.rows; r++) {
       for (let c = 0; c < puzzle.cols; c++) {
-        const letter = puzzle.cells[r + "," + c];
+        const k = r + "," + c;
+        const letter = puzzle.cells[k];
         const cell = document.createElement("div");
         if (letter) {
-          cell.className = "cw-cell fill" + (showAns ? "" : " hide-letter");
-          const num = puzzle.numberAt[r + "," + c];
+          cell.className = "cw-cell fill";
+          cell.dataset.k = k;
+          const num = puzzle.numberAt[k];
           if (num) cell.innerHTML = '<span class="num">' + num + "</span>";
-          cell.appendChild(document.createTextNode(letter));
+          const inp = document.createElement("input");
+          inp.maxLength = 1;
+          inp.autocapitalize = "characters";
+          inp.autocomplete = "off";
+          inp.dataset.k = k;
+          inp.setAttribute("aria-label", "row " + (r + 1) + " column " + (c + 1));
+          cell.appendChild(inp);
+          inputs[k] = inp;
         } else {
           cell.className = "cw-cell block";
         }
@@ -273,29 +295,376 @@
       }
     }
     host.appendChild(grid);
+    wireGrid();
 
-    // カギ
     renderClueList($("acrossList"), puzzle.across);
     renderClueList($("downList"), puzzle.down);
 
-    // 未配置語
     const un = $("unplacedHost");
     if (puzzle.unplaced && puzzle.unplaced.length) {
       un.innerHTML = '<div class="unplaced-note">交差が作れず盤面に入らなかった語: ' +
         puzzle.unplaced.map((u) => esc(u.raw || u.word)).join(", ") +
         '　（別レイアウトで再生成すると入る場合があります）</div>';
     } else un.innerHTML = "";
+
+    $("practiceCard").style.display = "none";
+    updateProgress();
   }
 
   function renderClueList(ol, items) {
     ol.innerHTML = "";
     items.forEach((it) => {
       const li = document.createElement("li");
+      li.dataset.dir = it.dir;
+      li.dataset.num = it.number;
+      li.style.cursor = "pointer";
       li.innerHTML = '<span class="cnum">' + it.number + '</span>' +
         '<span>' + esc(buildClue(it.entry)) + ' <span class="len">(' + it.entry.word.length + ')</span></span>';
+      li.addEventListener("click", () => focusCell(it.r + "," + it.c, it.dir));
       ol.appendChild(li);
     });
   }
+
+  const parseK = (k) => k.split(",").map(Number);
+
+  // 現在の方向の単語(無ければ他方向)
+  function wordFor(k, dir) {
+    const w = cellWords[k];
+    if (!w) return null;
+    return w[dir] || w[dir === "H" ? "V" : "H"] || null;
+  }
+
+  function focusCell(k, dir) {
+    if (!inputs[k]) return;
+    if (dir) curDir = cellWords[k] && cellWords[k][dir] ? dir : curDir;
+    curCell = k;
+    inputs[k].focus();
+    inputs[k].select();
+    highlight();
+  }
+
+  function highlight() {
+    document.querySelectorAll(".cw-cell.fill").forEach((c) => c.classList.remove("in-word", "active"));
+    document.querySelectorAll(".clue-list li").forEach((l) => l.classList.remove("hl"));
+    if (!curCell) return;
+    const it = wordFor(curCell, curDir);
+    if (!it) return;
+    curDir = it.dir;
+    const dr = it.dir === "V" ? 1 : 0, dc = it.dir === "H" ? 1 : 0;
+    for (let i = 0; i < it.entry.word.length; i++) {
+      const k = (it.r + dr * i) + "," + (it.c + dc * i);
+      const cell = document.querySelector('.cw-cell[data-k="' + k + '"]');
+      if (cell) cell.classList.add("in-word");
+    }
+    const active = document.querySelector('.cw-cell[data-k="' + curCell + '"]');
+    if (active) active.classList.add("active");
+
+    const li = document.querySelector('.clue-list li[data-dir="' + it.dir + '"][data-num="' + it.number + '"]');
+    if (li) li.classList.add("hl");
+
+    const cc = $("currentClue");
+    cc.className = "current-clue on";
+    cc.innerHTML = "<b>" + it.number + " " + (it.dir === "H" ? "ヨコ" : "タテ") + "</b>　" +
+      esc(buildClue(it.entry)) + " <span class='len'>(" + it.entry.word.length + ")</span>";
+  }
+
+  // 方向に沿って step 分移動
+  function step(k, dir, delta) {
+    const [r, c] = parseK(k);
+    const nk = dir === "H" ? r + "," + (c + delta) : (r + delta) + "," + c;
+    return inputs[nk] ? nk : null;
+  }
+
+  function wireGrid() {
+    const host = $("gridHost");
+
+    host.addEventListener("mousedown", (e) => {
+      const inp = e.target.closest("input");
+      if (!inp) return;
+      const k = inp.dataset.k;
+      // 同じマスを再クリック → タテ／ヨコ切替
+      if (k === curCell && cellWords[k].H && cellWords[k].V) {
+        curDir = curDir === "H" ? "V" : "H";
+      } else if (cellWords[k] && !cellWords[k][curDir]) {
+        curDir = cellWords[k].H ? "H" : "V";
+      }
+      curCell = k;
+      setTimeout(highlight, 0);
+    });
+
+    host.addEventListener("focusin", (e) => {
+      const inp = e.target.closest("input");
+      if (!inp) return;
+      if (curCell !== inp.dataset.k) { curCell = inp.dataset.k; }
+      if (cellWords[curCell] && !cellWords[curCell][curDir]) {
+        curDir = cellWords[curCell].H ? "H" : "V";
+      }
+      highlight();
+    });
+
+    host.addEventListener("input", (e) => {
+      const inp = e.target.closest("input");
+      if (!inp) return;
+      const v = inp.value.replace(/[^A-Za-z]/g, "").toUpperCase();
+      inp.value = v.slice(-1);
+      inp.parentElement.classList.remove("wrong", "correct", "revealed");
+      if (inp.value) {
+        const nk = step(inp.dataset.k, curDir, 1);
+        if (nk) focusCell(nk);
+      }
+      updateProgress();
+    });
+
+    host.addEventListener("keydown", (e) => {
+      const inp = e.target.closest("input");
+      if (!inp) return;
+      const k = inp.dataset.k;
+      const moves = { ArrowRight: ["H", 1], ArrowLeft: ["H", -1], ArrowDown: ["V", 1], ArrowUp: ["V", -1] };
+      if (moves[e.key]) {
+        e.preventDefault();
+        const [d, delta] = moves[e.key];
+        const nk = step(k, d, delta);
+        if (nk) { curDir = d; focusCell(nk); }
+        return;
+      }
+      if (e.key === "Backspace") {
+        e.preventDefault();
+        inp.parentElement.classList.remove("wrong", "correct", "revealed");
+        if (inp.value) { inp.value = ""; }
+        else {
+          const pk = step(k, curDir, -1);
+          if (pk) { inputs[pk].value = ""; inputs[pk].parentElement.classList.remove("wrong", "correct", "revealed"); focusCell(pk); }
+        }
+        updateProgress();
+        return;
+      }
+      if (e.key === " " || e.key === "Tab") {
+        e.preventDefault();
+        if (e.key === " ") { curDir = curDir === "H" ? "V" : "H"; highlight(); }
+        else jumpWord(e.shiftKey ? -1 : 1);
+      }
+    });
+  }
+
+  // 次／前の単語へ
+  function jumpWord(delta) {
+    const all = puzzle.across.concat(puzzle.down);
+    const it = curCell ? wordFor(curCell, curDir) : null;
+    let idx = it ? all.indexOf(it) : -1;
+    idx = (idx + delta + all.length) % all.length;
+    const t = all[idx];
+    curDir = t.dir;
+    focusCell(t.r + "," + t.c, t.dir);
+  }
+
+  /* ---------------- 答え合わせ・進捗 ---------------- */
+  function updateProgress() {
+    const keys = Object.keys(inputs);
+    let filled = 0;
+    keys.forEach((k) => { if (inputs[k].value) filled++; });
+    $("solveBar").style.width = (keys.length ? (filled / keys.length) * 100 : 0) + "%";
+    $("solveText").textContent = filled + " / " + keys.length + " マス";
+
+    // 単語ごとの完成チェック(カギに印)
+    puzzle.across.concat(puzzle.down).forEach((it) => {
+      const li = document.querySelector('.clue-list li[data-dir="' + it.dir + '"][data-num="' + it.number + '"]');
+      if (li) li.classList.toggle("done", wordSolved(it));
+    });
+
+    if (filled === keys.length && keys.length > 0 && allCorrect()) onComplete();
+  }
+
+  function wordSolved(it) {
+    const dr = it.dir === "V" ? 1 : 0, dc = it.dir === "H" ? 1 : 0;
+    for (let i = 0; i < it.entry.word.length; i++) {
+      const k = (it.r + dr * i) + "," + (it.c + dc * i);
+      if ((inputs[k].value || "").toUpperCase() !== puzzle.cells[k]) return false;
+    }
+    return true;
+  }
+
+  function allCorrect() {
+    return Object.keys(inputs).every((k) => (inputs[k].value || "").toUpperCase() === puzzle.cells[k]);
+  }
+
+  $("checkBtn").addEventListener("click", () => {
+    let wrong = 0, blank = 0;
+    Object.keys(inputs).forEach((k) => {
+      const cell = inputs[k].parentElement;
+      cell.classList.remove("wrong", "correct");
+      const v = (inputs[k].value || "").toUpperCase();
+      if (!v) { blank++; return; }
+      if (v === puzzle.cells[k]) cell.classList.add("correct");
+      else { cell.classList.add("wrong"); wrong++; }
+    });
+    if (wrong === 0 && blank === 0) { onComplete(); }
+    else setStatus("genStatus", "誤り " + wrong + " マス / 未入力 " + blank + " マス", wrong ? "err" : "busy");
+  });
+
+  $("revealBtn").addEventListener("click", () => {
+    if (!confirm("すべての解答を表示しますか？")) return;
+    Object.keys(inputs).forEach((k) => {
+      if ((inputs[k].value || "").toUpperCase() !== puzzle.cells[k]) {
+        inputs[k].value = puzzle.cells[k];
+        inputs[k].parentElement.classList.add("revealed");
+      }
+    });
+    updateProgress();
+    showPractice();  // 解答表示後も音読練習は使えるように
+  });
+
+  $("clearGridBtn").addEventListener("click", () => {
+    Object.keys(inputs).forEach((k) => {
+      inputs[k].value = "";
+      inputs[k].parentElement.classList.remove("wrong", "correct", "revealed");
+    });
+    $("practiceCard").style.display = "none";
+    setStatus("genStatus", "", "");
+    updateProgress();
+  });
+
+  function onComplete() {
+    setStatus("genStatus", "", "");
+    Object.keys(inputs).forEach((k) => inputs[k].parentElement.classList.remove("wrong"));
+    showPractice();
+    $("practiceCard").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  /* ---------------- 音読・録音練習 ---------------- */
+  // 例文の空所を単語で埋めた「完全な英文」を返す
+  function fullSentence(entry) {
+    const s = entry.sentence;
+    const word = entry.raw || entry.word.toLowerCase();
+    if (!s) return word;
+    if (/（\s*）|\(\s*\)/.test(s)) {
+      return s.replace(/（\s*）/g, word).replace(/\(\s*\)/g, word);
+    }
+    return s;
+  }
+
+  // 読み上げ対象の語を下線表示するHTML
+  function sentenceHtml(entry) {
+    const s = fullSentence(entry);
+    const w = (entry.raw || entry.word).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp("\\b(" + w + "\\w*)", "i");
+    return esc(s).replace(re, "<u>$1</u>");
+  }
+
+  const rate = () => parseFloat($("ttsRate").value);
+  $("ttsRate").addEventListener("input", () => { $("ttsRateVal").textContent = rate().toFixed(1) + "x"; });
+
+  function speak(text, onend) {
+    if (!("speechSynthesis" in window)) { alert("お使いのブラウザは音声読み上げに対応していません。"); return; }
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "en-US";
+    u.rate = rate();
+    const v = speechSynthesis.getVoices().find((x) => /en[-_]US/i.test(x.lang));
+    if (v) u.voice = v;
+    if (onend) u.onend = onend;
+    speechSynthesis.speak(u);
+  }
+
+  function showPractice() {
+    const list = $("practiceList");
+    list.innerHTML = "";
+    const items = puzzle.across.concat(puzzle.down)
+      .sort((a, b) => a.number - b.number);
+    // 同じ語の重複を除く
+    const seen = new Set();
+    items.forEach((it) => {
+      if (seen.has(it.entry.word)) return;
+      seen.add(it.entry.word);
+      list.appendChild(practiceRow(it.entry));
+    });
+    $("practiceCard").style.display = "block";
+  }
+
+  function practiceRow(entry) {
+    const div = document.createElement("div");
+    div.className = "p-item";
+    div.innerHTML =
+      '<div class="p-word">' + esc(entry.raw || entry.word.toLowerCase()) +
+      (entry.translation ? '<span class="p-ja">' + esc(entry.translation) + "</span>" : "") + "</div>" +
+      '<div class="p-sent">' + sentenceHtml(entry) + "</div>" +
+      '<div class="p-btns">' +
+      '<button class="p-btn" data-act="listen">手本を聴く</button>' +
+      '<button class="p-btn rec" data-act="rec">録音する</button>' +
+      '<button class="p-btn" data-act="play" disabled>録音を再生</button>' +
+      '<span class="p-note"></span>' +
+      "</div>";
+
+    const text = fullSentence(entry);
+    const btnListen = div.querySelector('[data-act="listen"]');
+    const btnRec = div.querySelector('[data-act="rec"]');
+    const btnPlay = div.querySelector('[data-act="play"]');
+    const note = div.querySelector(".p-note");
+
+    btnListen.addEventListener("click", () => {
+      btnListen.textContent = "再生中…";
+      speak(text, () => { btnListen.textContent = "手本を聴く"; });
+    });
+
+    let recorder = null, chunks = [], audioUrl = null;
+    btnRec.addEventListener("click", async () => {
+      if (recorder && recorder.state === "recording") {
+        recorder.stop();
+        return;
+      }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        note.textContent = "このブラウザは録音に対応していません。";
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        chunks = [];
+        recorder = new MediaRecorder(stream);
+        recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+        recorder.onstop = () => {
+          stream.getTracks().forEach((t) => t.stop());
+          if (audioUrl) URL.revokeObjectURL(audioUrl);
+          audioUrl = URL.createObjectURL(new Blob(chunks, { type: chunks[0] ? chunks[0].type : "audio/webm" }));
+          btnPlay.disabled = false;
+          btnRec.classList.remove("on");
+          btnRec.textContent = "録り直す";
+          note.textContent = "録音しました。聴き比べてみましょう。";
+        };
+        recorder.start();
+        btnRec.classList.add("on");
+        btnRec.textContent = "■ 停止";
+        note.textContent = "録音中… 例文を音読してください。";
+      } catch (err) {
+        note.textContent = "マイクを使用できません（許可が必要です）。";
+      }
+    });
+
+    btnPlay.addEventListener("click", () => {
+      if (!audioUrl) return;
+      new Audio(audioUrl).play();
+    });
+
+    return div;
+  }
+
+  // すべて続けて聴く
+  $("playAllBtn").addEventListener("click", function () {
+    const btn = this;
+    const rows = puzzle.across.concat(puzzle.down).sort((a, b) => a.number - b.number);
+    const seen = new Set();
+    const texts = [];
+    rows.forEach((it) => {
+      if (seen.has(it.entry.word)) return;
+      seen.add(it.entry.word);
+      texts.push(fullSentence(it.entry));
+    });
+    let i = 0;
+    btn.disabled = true;
+    btn.textContent = "再生中…";
+    (function next() {
+      if (i >= texts.length) { btn.disabled = false; btn.textContent = "すべて続けて聴く"; return; }
+      speak(texts[i++], next);
+    })();
+  });
 
   /* ---------------- PDF出力 ---------------- */
   // 日本語対応のため、HTMLを html2canvas でラスタライズして jsPDF に貼る。

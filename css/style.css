@@ -130,8 +130,68 @@ table.words td.eng input { font-family: "Times New Roman", serif; font-weight: 7
   display: flex; align-items: center; justify-content: center;
   font-size: 1.05rem; font-weight: 700; text-transform: uppercase;
 }
-.cw-cell .num { position: absolute; top: 1px; left: 2px; font-size: .5rem; font-weight: 700; color: var(--ink-soft); font-family: sans-serif; }
-.cw-cell.hide-letter { color: transparent; }
+.cw-cell .num { position: absolute; top: 1px; left: 2px; font-size: .5rem; font-weight: 700; color: var(--ink-soft); font-family: sans-serif; z-index: 2; pointer-events: none; }
+
+/* 入力マス */
+.cw-cell.fill input {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  border: none; background: transparent; text-align: center;
+  font-family: "Times New Roman", serif; font-size: 1.05rem; font-weight: 700;
+  text-transform: uppercase; color: var(--ink); padding: 0; border-radius: 0;
+  caret-color: var(--brand); cursor: pointer;
+}
+.cw-cell.fill input:focus { outline: none; }
+.cw-cell.in-word { background: #dbeafe; }
+.cw-cell.active { background: #fde68a; }
+.cw-cell.wrong input { color: var(--ng); }
+.cw-cell.wrong { background: #fee2e2; }
+.cw-cell.correct input { color: #15803d; }
+.cw-cell.revealed input { color: var(--brand); }
+
+/* 解答状況バー */
+.solve-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; font-size: .82rem; color: var(--ink-soft); font-weight: 700; }
+.solve-progress { flex: 1; height: 9px; background: var(--line); border-radius: 999px; overflow: hidden; }
+.solve-progress > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--brand), #60a5fa); transition: width .3s ease; }
+
+.current-clue {
+  background: var(--brand-soft); border-left: 4px solid var(--brand);
+  border-radius: 8px; padding: 9px 14px; margin-bottom: 12px;
+  font-size: .88rem; min-height: 1em; display: none;
+}
+.current-clue.on { display: block; }
+.current-clue b { color: var(--brand); }
+
+.clue-list li.hl { background: var(--brand-soft); border-radius: 6px; }
+.clue-list li.done .cnum { color: var(--ok); }
+
+/* ---- 音読・録音練習 ---- */
+#practiceCard { display: none; }
+.congrats { text-align: center; padding: 6px 0 16px; }
+.congrats-title { font-size: 1.3rem; font-weight: 800; color: var(--brand); }
+.congrats-sub { font-size: .86rem; color: var(--ink-soft); margin-top: 4px; }
+.practice-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 12px 0 16px; border-bottom: 1px solid var(--line); margin-bottom: 6px; font-size: .84rem; font-weight: 700; }
+.practice-tools label { display: flex; align-items: center; gap: 8px; }
+.practice-tools input[type=range] { width: 120px; }
+
+.p-item { border-bottom: 1px solid var(--line); padding: 14px 2px; }
+.p-item:last-child { border-bottom: none; }
+.p-word { font-family: "Times New Roman", serif; font-size: 1.05rem; font-weight: 700; letter-spacing: .03em; }
+.p-word .p-ja { font-family: inherit; font-size: .82rem; font-weight: 600; color: var(--ink-soft); margin-left: 10px; letter-spacing: 0; }
+.p-sent { font-family: "Times New Roman", serif; font-size: .98rem; margin: 4px 0 10px; line-height: 1.6; }
+.p-sent u { text-decoration-color: var(--brand); text-underline-offset: 3px; font-weight: 700; }
+.p-btns { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.p-btn {
+  border: 1px solid var(--line); background: #f8fafc; color: var(--ink);
+  border-radius: 999px; padding: 6px 14px; font-size: .8rem; font-weight: 700;
+  cursor: pointer; font-family: inherit; transition: .15s;
+}
+.p-btn:hover:not(:disabled) { background: var(--brand-soft); border-color: var(--brand); color: var(--brand); }
+.p-btn:disabled { opacity: .45; cursor: not-allowed; }
+.p-btn.rec { color: var(--ng); border-color: #fecaca; }
+.p-btn.rec.on { background: var(--ng); color: #fff; border-color: var(--ng); animation: pulse 1.2s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+.p-note { font-size: .76rem; color: var(--ink-soft); margin-left: 4px; }
+.p-item audio { height: 32px; vertical-align: middle; }
 
 .clue-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
 .clue-list h3 { font-size: .95rem; border-bottom: 2px solid var(--brand); padding-bottom: 5px; margin: 0 0 8px; }
