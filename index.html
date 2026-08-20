@@ -150,12 +150,16 @@
         <div class="congrats-sub">仕上げに例文を音読して練習しましょう。手本を聴く → 録音 → 聴き比べ、の順がおすすめです。</div>
       </div>
       <div class="practice-tools">
+        <label>音声
+          <select id="ttsVoice" style="width:auto; min-width:200px; padding:6px 10px; font-size:.82rem;"></select>
+        </label>
         <label>読み上げ速度
           <input type="range" id="ttsRate" min="0.5" max="1.2" step="0.1" value="0.9">
           <span id="ttsRateVal">0.9x</span>
         </label>
         <button class="btn btn-ghost" id="playAllBtn">すべて続けて聴く</button>
       </div>
+      <p class="voice-note" id="voiceNote"></p>
       <div id="practiceList"></div>
     </section>
   </div>

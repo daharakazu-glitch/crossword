@@ -553,17 +553,120 @@
   const rate = () => parseFloat($("ttsRate").value);
   $("ttsRate").addEventListener("input", () => { $("ttsRateVal").textContent = rate().toFixed(1) + "x"; });
 
+  /* --- 音声(voice)の選定 ---
+   * getVoices() は初回は空配列を返すことがあるため voiceschanged を待つ。
+   * ネタ音声(Zarvox等)を除外し、自然な高品質音声を優先して並べる。
+   */
+  let voices = [];
+
+  // macOS等に入っているノベルティ音声(機械的で教材に不適)
+  const NOVELTY = /^(albert|bad news|bahh|bells|boing|bubbles|cellos|deranged|good news|jester|junior|kathy|organ|princess|ralph|trinoids|whisper|wobble|zarvox|superstar|grandma|grandpa|rocko|sandy|shelley|eddy|flo|reed|fred|hysterical|pipe organ)\b/i;
+  // Appleはノベルティ音声の名前だけを日本語化する(ささやき声/オルガン/道化 等)。
+  // 実在の人名音声(Samantha, Daniel…)はラテン文字のままなので、CJK名は一括除外できる。
+  const CJK_NAME = /[\u3040-\u30ff\u4e00-\u9faf]/;
+
+  // 自然さで並べるためのスコア
+  function voiceScore(v) {
+    const n = v.name;
+    let s = 0;
+    if (NOVELTY.test(n)) return -1000;
+    if (CJK_NAME.test(n.replace(/\s*[（(].*$/, ""))) return -1000;
+    // ネットワーク系(Google/Microsoft)は概して自然
+    if (/Google/i.test(n)) s += 120;
+    if (/Natural|Neural|Online/i.test(n)) s += 120;
+    if (/Premium|Enhanced/i.test(n)) s += 90;
+    if (v.localService === false) s += 40;
+    // Apple の標準的な自然音声
+    if (/^(Samantha|Ava|Allison|Susan|Zoe|Evan|Nathan|Joelle|Tom|Alex|Karen|Daniel|Serena|Kate|Oliver|Stephanie)\b/i.test(n)) s += 60;
+    // 方言の優先度
+    if (/^en[-_]US/i.test(v.lang)) s += 30;
+    else if (/^en[-_]GB/i.test(v.lang)) s += 20;
+    else if (/^en[-_]AU|^en[-_]CA/i.test(v.lang)) s += 10;
+    return s;
+  }
+
+  function loadVoices() {
+    return new Promise((resolve) => {
+      if (!("speechSynthesis" in window)) return resolve([]);
+      const get = () => speechSynthesis.getVoices().filter((v) => /^en/i.test(v.lang));
+      let list = get();
+      if (list.length) return resolve(list);
+      // 初回は非同期で届く
+      let done = false;
+      const finish = () => { if (done) return; done = true; resolve(get()); };
+      speechSynthesis.addEventListener("voiceschanged", finish, { once: true });
+      setTimeout(finish, 1500); // 保険
+    });
+  }
+
+  async function initVoices() {
+    voices = (await loadVoices())
+      .filter((v) => voiceScore(v) > -1000)
+      .sort((a, b) => voiceScore(b) - voiceScore(a));
+
+    const sel = $("ttsVoice");
+    const note = $("voiceNote");
+    sel.innerHTML = "";
+
+    if (!voices.length) {
+      sel.innerHTML = '<option>利用できる英語音声がありません</option>';
+      note.textContent = "英語の音声がインストールされていません。OSの設定で英語音声を追加してください。";
+      return;
+    }
+
+    voices.forEach((v, i) => {
+      const o = document.createElement("option");
+      o.value = i;
+      o.textContent = v.name + "（" + v.lang + "）" + (voiceScore(v) >= 100 ? " ★高品質" : "");
+      sel.appendChild(o);
+    });
+
+    // 前回の選択を復元
+    const saved = localStorage.getItem("cw_voice");
+    const idx = saved ? voices.findIndex((v) => v.name === saved) : -1;
+    sel.value = idx >= 0 ? idx : 0;
+
+    updateVoiceNote();
+    sel.addEventListener("change", () => {
+      localStorage.setItem("cw_voice", currentVoice().name);
+      updateVoiceNote();
+      speak("This is a sample of the selected voice.");
+    });
+  }
+
+  function currentVoice() {
+    return voices[parseInt($("ttsVoice").value, 10)] || voices[0] || null;
+  }
+
+  function updateVoiceNote() {
+    const v = currentVoice();
+    if (!v) return;
+    const note = $("voiceNote");
+    if (voiceScore(v) >= 100) {
+      note.textContent = "自然な音声を選択中です。";
+      note.className = "voice-note good";
+    } else {
+      note.textContent = "この音声は機械的に聞こえる場合があります。ChromeまたはEdgeで開くと、より自然な音声（Google / Microsoft Natural）が使えます。macOSでは「システム設定 → アクセシビリティ → 読み上げコンテンツ → システムの声 → 英語（米国）」から高品質な声を追加できます。";
+      note.className = "voice-note warn";
+    }
+  }
+
   function speak(text, onend) {
     if (!("speechSynthesis" in window)) { alert("お使いのブラウザは音声読み上げに対応していません。"); return; }
+    // 直前の再生を止めるので、他ボタンの「再生中…」表示を戻す
+    document.querySelectorAll('[data-act="listen"]').forEach((b) => { b.textContent = "手本を聴く"; });
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = "en-US";
+    const v = currentVoice();
+    if (v) { u.voice = v; u.lang = v.lang; }
+    else u.lang = "en-US";
     u.rate = rate();
-    const v = speechSynthesis.getVoices().find((x) => /en[-_]US/i.test(x.lang));
-    if (v) u.voice = v;
-    if (onend) u.onend = onend;
+    u.pitch = 1;
+    if (onend) { u.onend = onend; u.onerror = onend; }
     speechSynthesis.speak(u);
   }
+
+  initVoices();
 
   function showPractice() {
     const list = $("practiceList");
