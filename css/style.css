@@ -197,6 +197,23 @@ table.words td.eng input { font-family: "Times New Roman", serif; font-weight: 7
 .p-note { font-size: .76rem; color: var(--ink-soft); margin-left: 4px; }
 .p-item audio { height: 32px; vertical-align: middle; }
 
+/* 音読の採点結果 */
+.p-result:empty { display: none; }
+.p-nosr { font-size: .78rem; color: var(--ink-soft); margin-top: 8px; }
+.p-score { display: flex; gap: 14px; align-items: flex-start; margin-top: 10px; padding: 10px 12px; background: #f8fafc; border: 1px solid var(--line); border-radius: 10px; }
+.p-score-num { font-family: "Times New Roman", serif; font-size: 2.1rem; font-weight: 700; line-height: 1; color: var(--brand); min-width: 84px; text-align: center; }
+.p-score-num small { font-size: .72rem; font-family: inherit; margin-left: 2px; }
+.p-score-body { flex: 1; min-width: 0; }
+.p-score-bar { height: 8px; background: #e2e8f0; border-radius: 99px; overflow: hidden; }
+.p-score-bar i { display: block; height: 100%; background: linear-gradient(90deg, #60a5fa, var(--brand)); border-radius: 99px; transition: width .5s ease; }
+.p-score-tier { font-size: .84rem; font-weight: 700; margin-top: 6px; }
+.p-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.p-chip { font-family: "Times New Roman", serif; font-size: .82rem; padding: 1px 7px; border-radius: 99px; border: 1px solid transparent; }
+.p-chip.ok { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+.p-chip.mid { background: #fef3c7; color: #b45309; border-color: #fde68a; }
+.p-chip.ng { background: #f1f5f9; color: var(--ink-soft); border-color: #e2e8f0; }
+.p-heard { font-size: .76rem; color: var(--ink-soft); margin-top: 6px; }
+
 .clue-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
 .clue-list h3 { font-size: .95rem; border-bottom: 2px solid var(--brand); padding-bottom: 5px; margin: 0 0 8px; }
 .clue-list ol { list-style: none; padding: 0; margin: 0; }

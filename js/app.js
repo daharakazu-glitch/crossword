@@ -668,6 +668,142 @@
 
   initVoices();
 
+  /* ---------------- 音読の自動採点（100点満点・励まし重視） ----------------
+   * 録音と同時に SpeechRecognition を走らせて文字起こしし、手本の英文と
+   * 単語単位で照合する。生徒のやる気を削がないよう曲線は甘めにするが、
+   * 満点(100)は「全単語が完全に聞き取れ、余計な語もない」ときだけ出す。
+   */
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+
+  function normWords(s) {
+    return String(s).toLowerCase()
+      .replace(/[’']/g, "'")
+      .replace(/[^a-z0-9'\s]/g, " ")
+      .replace(/\s+/g, " ").trim()
+      .split(" ").filter(Boolean);
+  }
+
+  function lev(a, b) {
+    const m = a.length, n = b.length;
+    if (!m) return n;
+    if (!n) return m;
+    let prev = new Array(n + 1), cur = new Array(n + 1);
+    for (let j = 0; j <= n; j++) prev[j] = j;
+    for (let i = 1; i <= m; i++) {
+      cur[0] = i;
+      for (let j = 1; j <= n; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      }
+      const t = prev; prev = cur; cur = t;
+    }
+    return prev[n];
+  }
+
+  // 単語同士の似ぐあい 0..1（発音の揺れを拾えるよう編集距離ベース）
+  function wordSim(a, b) {
+    if (a === b) return 1;
+    const d = lev(a, b);
+    return Math.max(0, 1 - d / Math.max(a.length, b.length));
+  }
+
+  // 手本の語列と聞き取り語列を並べて、手本の各語がどれだけ言えたかを返す
+  function alignWords(target, said) {
+    const m = target.length, n = said.length;
+    const dp = [], bt = [];
+    for (let i = 0; i <= m; i++) { dp.push(new Float64Array(n + 1)); bt.push(new Int8Array(n + 1)); }
+    for (let i = 1; i <= m; i++) bt[i][0] = 1;
+    for (let j = 1; j <= n; j++) bt[0][j] = 2;
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        const diag = dp[i - 1][j - 1] + wordSim(target[i - 1], said[j - 1]);
+        const up = dp[i - 1][j];
+        const left = dp[i][j - 1];
+        if (diag >= up && diag >= left) { dp[i][j] = diag; bt[i][j] = 0; }
+        else if (up >= left) { dp[i][j] = up; bt[i][j] = 1; }
+        else { dp[i][j] = left; bt[i][j] = 2; }
+      }
+    }
+    const sims = new Array(m).fill(0);
+    let extra = 0, i = m, j = n;
+    while (i > 0 || j > 0) {
+      const d = i === 0 ? 2 : j === 0 ? 1 : bt[i][j];
+      if (d === 0) { sims[i - 1] = wordSim(target[i - 1], said[j - 1]); i--; j--; }
+      else if (d === 1) { i--; }
+      else { extra++; j--; }
+    }
+    return { sims, extra };
+  }
+
+  // conf: 音声認識の平均確信度(0..1)。取得できない環境では null。
+  function scoreReading(targetText, heardText, conf) {
+    const target = normWords(targetText);
+    const said = normWords(heardText);
+    if (!target.length) return null;
+    const { sims, extra } = alignWords(target, said);
+    const acc = sims.reduce((a, b) => a + b, 0) / target.length;
+    // 励まし重視の甘い曲線: 半分言えれば 77点、9割で 95点。通常の上限は 99点。
+    let score = 45 + 54 * Math.pow(acc, 0.75);
+    score -= Math.min(8, extra * 2);                  // 余計な語は軽い減点
+    if (conf != null) score += (conf - 0.75) * 8;     // 発音の明瞭さで ±2 程度
+    score = Math.round(Math.max(50, Math.min(99, score)));
+    // 満点は「全語を過不足なく、はっきり言い切った」ときだけ
+    if (acc >= 0.995 && extra === 0 && target.length >= 3 && (conf == null || conf >= 0.9)) {
+      score = 100;
+    }
+    return { score, acc, sims, target, extra };
+  }
+
+  function tierOf(score) {
+    if (score === 100) return "満点！ 完璧な音読です";
+    if (score >= 93) return "すばらしい！ ネイティブ級のなめらかさ";
+    if (score >= 85) return "とても良い発音です！ この調子";
+    if (score >= 75) return "いい感じ！ あと少しで高得点";
+    if (score >= 65) return "しっかり声が出ています。もう一度どうぞ";
+    return "ナイストライ！ 手本を聴いて再挑戦しよう";
+  }
+
+  function scoreHtml(res, heardText) {
+    const chips = res.target.map((w, i) => {
+      const s = res.sims[i];
+      const cls = s >= 0.85 ? "ok" : s >= 0.5 ? "mid" : "ng";
+      return '<span class="p-chip ' + cls + '">' + esc(w) + "</span>";
+    }).join("");
+    return (
+      '<div class="p-score">' +
+      '<div class="p-score-num">' + res.score + "<small>点</small></div>" +
+      '<div class="p-score-body">' +
+      '<div class="p-score-bar"><i style="width:' + res.score + '%"></i></div>' +
+      '<div class="p-score-tier">' + esc(tierOf(res.score)) + "</div>" +
+      '<div class="p-chips">' + chips + "</div>" +
+      (heardText
+        ? '<div class="p-heard">聞き取り: “' + esc(heardText) + "”</div>"
+        : "") +
+      "</div></div>"
+    );
+  }
+
+  // 録音と並行して走らせる音声認識。使えない環境では null を返す。
+  function startRecognition(onText) {
+    if (!SR) return null;
+    let rec;
+    try { rec = new SR(); } catch (e) { return null; }
+    rec.lang = (currentVoice() && currentVoice().lang) || "en-US";
+    rec.continuous = true;
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    rec.onresult = (ev) => {
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        if (ev.results[i].isFinal) {
+          onText(ev.results[i][0].transcript || "", ev.results[i][0].confidence);
+        }
+      }
+    };
+    rec.onerror = () => {};
+    try { rec.start(); } catch (e) { return null; }
+    return rec;
+  }
+
   function showPractice() {
     const list = $("practiceList");
     list.innerHTML = "";
@@ -695,20 +831,39 @@
       '<button class="p-btn rec" data-act="rec">録音する</button>' +
       '<button class="p-btn" data-act="play" disabled>録音を再生</button>' +
       '<span class="p-note"></span>' +
-      "</div>";
+      "</div>" +
+      '<div class="p-result"></div>';
 
     const text = fullSentence(entry);
     const btnListen = div.querySelector('[data-act="listen"]');
     const btnRec = div.querySelector('[data-act="rec"]');
     const btnPlay = div.querySelector('[data-act="play"]');
     const note = div.querySelector(".p-note");
+    const result = div.querySelector(".p-result");
 
     btnListen.addEventListener("click", () => {
       btnListen.textContent = "再生中…";
       speak(text, () => { btnListen.textContent = "手本を聴く"; });
     });
 
-    let recorder = null, chunks = [], audioUrl = null;
+    let recorder = null, chunks = [], audioUrl = null, recog = null, heard = "", confs = [];
+
+    function judge() {
+      if (!SR) {
+        result.innerHTML = '<div class="p-nosr">この環境では自動採点が使えません。ChromeまたはEdgeで開くと点数が出ます。</div>';
+        return;
+      }
+      const said = heard.trim();
+      if (!said) {
+        result.innerHTML = '<div class="p-nosr">うまく聞き取れませんでした。マイクに近づいて、もう一度はっきり音読してみましょう。</div>';
+        return;
+      }
+      const conf = confs.length ? confs.reduce((a, b) => a + b, 0) / confs.length : null;
+      const res = scoreReading(text, said, conf);
+      if (!res) return;
+      result.innerHTML = scoreHtml(res, said);
+    }
+
     btnRec.addEventListener("click", async () => {
       if (recorder && recorder.state === "recording") {
         recorder.stop();
@@ -721,18 +876,29 @@
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         chunks = [];
+        heard = "";
+        confs = [];
+        result.innerHTML = "";
         recorder = new MediaRecorder(stream);
         recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
         recorder.onstop = () => {
           stream.getTracks().forEach((t) => t.stop());
+          if (recog) { try { recog.stop(); } catch (e) {} }
           if (audioUrl) URL.revokeObjectURL(audioUrl);
           audioUrl = URL.createObjectURL(new Blob(chunks, { type: chunks[0] ? chunks[0].type : "audio/webm" }));
           btnPlay.disabled = false;
           btnRec.classList.remove("on");
           btnRec.textContent = "録り直す";
           note.textContent = "録音しました。聴き比べてみましょう。";
+          result.innerHTML = '<div class="p-nosr">採点中…</div>';
+          // 認識結果は stop の直後に届くことがあるので少し待つ
+          setTimeout(judge, 800);
         };
         recorder.start();
+        recog = startRecognition((t, c) => {
+          heard = (heard + " " + t).trim();
+          if (typeof c === "number" && c > 0) confs.push(c);
+        });
         btnRec.classList.add("on");
         btnRec.textContent = "■ 停止";
         note.textContent = "録音中… 例文を音読してください。";
